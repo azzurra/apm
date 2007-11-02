@@ -1,0 +1,10 @@
+#!/bin/sh
+
+N=`ps -aux | grep -w  ". apm" | wc -l`
+
+if [ $N -eq "0" ]; then
+cd /home/ircd/apm-java/run/;./apm  
+echo "`/bin/date` apm non stava girando." >> /home/ircd/apm-java/run/apm_crash.log
+fi
+
+# EOF

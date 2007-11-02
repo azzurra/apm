@@ -1,0 +1,747 @@
+#!/bin/sh
+#
+# Configuration script for Azzurra Proxy Monitor.
+#
+###########################################################################
+
+# Nifty handy functions.
+
+echo2 () {
+	$ECHO2 "$*$ECHO2SUF"	# these are defined later
+}
+
+log () {
+	echo >&3 "$MODE: $*"
+}
+
+run () {
+	echo >&3 "$MODE: >>> $*"
+	$* >&3 2>&3 </dev/null
+}
+
+exists () {			# because some shells don't have test -e
+	if [ -f $1 -o -d $1 -o -p $1 -o -c $1 -o -b $1 ] ; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+###########################################################################
+
+# Test for the presence of a given include file or function.  If the
+# variable TEST is non-empty, it contains code to be placed at the end of
+# main(), and should return 0 if everything is okay, else 1.
+#
+# For includes: Pass the include filename as an argument.  The variable
+# HAVE_include_name, where "include_name" is the name of the include file
+# with letters uppercased and non-alphanumerics replaced by underscores, is
+# set to 1 if the include file is present, else 0.
+#
+# For functions: Pass the return type, function name, and prototype as
+# arguments.  The variable HAVE_function, where "function" is the name
+# of the function with letters uppercased, is set to 1 if the function is
+# available, else 0.
+#
+# For both: The result code of the function will be 0 (true) if the entity
+# is present, else 1 (false).
+
+test_include () {
+	include="$1"
+	inc2="`echo $include | tr '[a-z]/.-' '[A-Z]___'`"
+	if [ -f "/usr/include/$include" ] ; then
+		eval "HAVE_${inc2}=1"
+		log "found $include in /usr/include"
+		return 0
+	fi
+	cat >tmp/test.c <<EOT
+#include <$include>
+int main() { return 0; }
+EOT
+	if run $CC $CC_FLAGS tmp/test.c $CC_LIBS -o tmp/test ; then
+		eval "HAVE_${inc2}=1"
+		log "found $include"
+		return 0
+	else
+		eval "HAVE_${inc2}=0"
+		log "didn't find $include"
+		return 1
+	fi
+}
+
+test_function () {
+	rettype="$1"
+	func="$2"
+	proto="$3"
+	if [ ! "$rettype" -o ! "$func" ] ; then
+		log "test_function: missing parameter(s)"
+		return 1
+	fi
+	if [ ! "$proto" ] ; then
+		proto="(...)"
+	fi
+	func2=`echo $func | tr '[a-z]' '[A-Z]'`
+	if [ ! "$TEST" ] ; then
+		TEST="return 0;"
+	fi
+	cat >tmp/test.c <<EOT
+	int main() {
+		extern int $func$proto;
+		$TEST
+	}
+EOT
+	if run $CC $CC_FLAGS tmp/test.c $CC_LIBS -o tmp/test && run tmp/test ; then
+		eval "HAVE_${func2}=1"
+		log "found $func"
+		return 0
+	else
+		eval "HAVE_${func2}=0"
+		log "didn't find $func"
+		return 1
+	fi
+}
+
+###########################################################################
+
+# If something happens that really shouldn't:
+
+whoa_there () {
+	echo ""
+	echo ""
+	echo "*** WHOA THERE! ***"
+	echo ""
+	echo "We suddenly couldn't compile using the C compiler we already tested!"
+	echo "The command line we used was:"
+	echo "     $CC $CC_FLAGS tmp/test.c $CC_LIBS -o tmp/test"
+	echo ""
+	exit 4
+}
+
+###########################################################################
+###########################################################################
+
+# Create a temporary directory for our use.
+
+if [ -d tmp ] ; then
+	rm -rf tmp
+fi
+if mkdir tmp ; then : ; else
+	echo "Failed to create temporary directory!  Exiting."
+	exit 2
+fi
+if chmod u+rwx tmp ; then : ; else
+	echo "Cannot write to temporary directory!  Exiting."
+	exit 2
+fi
+
+###########################################################################
+
+# Variable initialization.
+
+PROGRAM=apm
+
+CC=
+CC_FLAGS=bonkle
+CC_LFLAGS=bonkle
+CC_LIBS=bonkle
+
+HAVE_SYS_SELECT_H=
+HAVE_SYS_POLL_H=
+HAVE_SYS_EVENT_H=
+HAVE_SYS_EPOLL_H=
+EPOLL_WORKS=
+HAVE_SYS_RESOURCE_H=
+HAVE_STRERROR=
+HAVE_SYS_TIME_H=
+TIME_WITH_SYS_TIME=
+
+MISSING=bonkle
+
+###########################################################################
+
+# How can we echo something without going to the next line?
+
+ECHO2SUF=''
+if [ "`echo -n a ; echo -n b`" = "ab" ] ; then
+	ECHO2='echo -n'
+elif [ "`echo 'a\c' ; echo 'b\c'`" = "ab" ] ; then
+	ECHO2='echo' ; ECHO2SUF='\c'
+elif [ "`printf 'a' 2>&1 ; printf 'b' 2>&1`" = "ab" ] ; then
+	ECHO2='printf "%s"'
+else
+	# oh well...
+	ECHO2='echo'
+fi
+export ECHO2 ECHO2SUF
+
+###########################################################################
+
+# Command-line parsing.
+
+IGNORE_CACHE= ; USER_CC= ; USER_CC_FLAGS=bonkle ; USER_CC_LFLAGS=bonkle
+USER_CC_LIBS=
+export IGNORE_CACHE USER_CC USER_CC_FLAGS USER_CC_LFLAGS USER_CC_LIBS
+
+while [ $# -gt 0 ] ; do
+	if [ "$1" = "-ignore-cache" ] ; then
+		IGNORE_CACHE=bonkle
+	elif [ "$1" = "-cc" ] ; then
+		shift
+		USER_CC=$1
+	elif [ "$1" = "-cflags" ] ; then
+		shift
+		USER_CC_FLAGS=$1
+	elif [ "$1" = "-lflags" ] ; then
+		shift
+		USER_CC_LFLAGS=$1
+	elif [ "$1" = "-libs" ] ; then
+		shift
+		USER_CC_LIBS=$1
+	elif [ "$1" = "-os2" ] ; then
+		PROGRAM=apm.exe
+	else
+		if [ "$1" != "-help" -a "$1" != "-h" -a "$1" != "--help" ]; then
+			echo >&2 Unknown option/parameter: "$1"
+			exitval=1
+		else
+			exitval=0
+		fi
+		cat >&2 <<EOT
+Available options:
+	-ignore-cache	Don't use cache file if it exists
+	-os2		Indicate that this is an OS/2 system.
+	-cc		Specify C compiler to use (overrides cache and check)
+	-cflags		Specify compilation flags (defaults: -O2 for gcc,
+			    -O for other compilers; overrides cache/check)
+	-lflags		Specify link flags for C compiler (default: none)
+	-libs		Specify extra link libraries to use (default: none)
+EOT
+		exit $exitval
+	fi
+	shift
+done
+
+###########################################################################
+
+# First, test for the presence of a config.cache file.  If found, either
+# don't use it (-ignore-cache), or let the user know how to not use it and
+# then use it.
+
+if [ -f config.cache -a -r config.cache -a ! "$IGNORE_CACHE" ] ; then
+	cat <<EOT
+Using defaults from config.cache.  To ignore, either remove config.cache or
+give the command-line option "-ignore-cache".
+
+EOT
+	. config.cache
+fi
+
+###########################################################################
+
+# Set up log file for automated tests, so we have a clue what's going on if
+# something dies.
+
+exec 3>configure.log
+
+MODE="                "
+TEST=""
+export MODE TEST
+
+###########################################################################
+
+# Search for a compiler.
+
+MODE="find_cc         "
+echo2 "Searching for a suitable compiler... "
+if [ "$USER_CC" ] ; then
+	CC="$USER_CC"
+	echo "(supplied) using $CC."
+	log user supplied \`"$USER_CC'"
+elif [ "$CC" ] ; then
+	echo "(cached) using $CC."
+	log cache supplied \`"$CC'"
+elif run gcc --version ; then
+	echo "great, found gcc!"
+	CC=gcc
+	DEF_CC_FLAGS=-O2
+	log using \`gcc\'
+else
+	echo "gcc not found."
+	echo2 "    Looking for alternatives... "
+	echo >tmp/test.c "int main(){return 1;}"
+	if run cc tmp/test.c -o tmp/test ; then
+		CC=cc
+	elif run c89 tmp/test.c -o tmp/test ; then
+		CC=c89
+	else
+		echo "no C compiler found!"
+		echo "    Use the -cc command line option to specify your C compiler."
+		log "automatic tests failed"
+		exit 2
+	fi
+	# See if it handles ANSI.
+	cat >tmp/test.c <<EOT
+	int main(int argc, char **argv) {
+		extern void foo(int bar);
+	}
+EOT
+	log "test for ANSI..."
+	if run $CC tmp/test.c -o tmp/test ; then
+		echo "using $CC."
+		log using \`"$CC'"
+	else
+		echo "found $CC, but it's not ANSI-compliant!"
+		echo "    Use the -cc command line option to specify your C compiler."
+		log \`"$CC' not ANSI-compliant"
+		exit 2
+	fi
+	DEF_CC_FLAGS=-O
+fi
+
+
+# Test compiler options.
+
+MODE="find_ccopts     "
+if [ "$USER_CC_FLAGS" != bonkle ] ; then
+	CC_FLAGS="$USER_CC_FLAGS"
+	echo "Compiler flags supplied: $CC_FLAGS"
+	log user supplied flags: \`"$CC_FLAGS'"
+elif [ "$CC_FLAGS" != bonkle ] ; then
+	echo "Compiler flags: (cached) $CC_FLAGS"
+	log cache supplied flags: \`"$CC_FLAGS'"
+else
+	CC_FLAGS=$DEF_CC_FLAGS
+	echo2 "Testing default compiler flags ($CC_FLAGS)... "
+	cat >tmp/test.c <<EOT
+	int main(int argc, char **argv) {
+		extern void foo(int bar);
+	}
+EOT
+	if run $CC $CC_FLAGS -c tmp/test.c -o tmp/test.o ; then
+		echo "looks good."
+	else
+		echo "no luck!  Using no flags."
+		echo "    If you know what flags you want, use the -cflags option to configure."
+		CC_FLAGS=
+	fi
+	log using flags: \`"$CC_FLAGS'"
+fi
+
+###########################################################################
+
+# Set linker flags.
+
+MODE="find_lflags     "
+if [ "$USER_CC_LFLAGS" != "bonkle" ] ; then
+	CC_LFLAGS=$USER_CC_LFLAGS
+	log user supplied \`"$CC_LFLAGS'"
+elif [ "$CC_LFLAGS" != "bonkle" ] ; then
+	log cache supplied \`"$CC_LFLAGS'"
+else
+	log using no flags
+	CC_LFLAGS=""
+fi
+
+###########################################################################
+
+# See what libraries we have that we might need.
+
+MODE="find_libs       "
+echo2 "Let's see what libraries are lying around... "
+if [ "$CC_LIBS" != bonkle ] ; then
+	if [ "$CC_LIBS" ] ; then
+		echo "(cached) $CC_LIBS"
+	else
+		echo "(cached) none"
+	fi
+	log cache supplied \`"$CC_LIBS'"
+else
+	CC_LIBS=
+	if run $CC $CC_FLAGS tmp/test.c -lnsl -o tmp/test ; then
+		CC_LIBS="$CC_LIBS -lnsl"
+		echo2 "-lnsl "
+	fi
+	if run $CC $CC_FLAGS tmp/test.c -lsocket -o tmp/test ; then
+		CC_LIBS="$CC_LIBS -lsocket"
+		echo2 "-lsocket "
+	fi
+	if run $CC $CC_FLAGS tmp/test.c -lresolv -o tmp/test ; then
+		CC_LIBS="$CC_LIBS -lresolv"
+		echo2 "-lresolv "
+	fi
+	if run $CC $CC_FLAGS tmp/test.c -lbsd -o tmp/test ; then
+		CC_LIBS="$CC_LIBS -lbsd"
+		echo2 "-lbsd "
+	fi
+
+	echo ""
+	CC_LIBS="`echo $CC_LIBS | sed 's/^ +//'`"
+fi
+if [ "$USER_CC_LIBS" ] ; then
+	CC_LIBS="$CC_LIBS $USER_CC_LIBS"
+	echo "Additional user-supplied libraries: $USER_CC_LIBS"
+	log user added \`"$USER_CC_LIBS'"
+fi
+
+###########################################################################
+
+# Look for include files that might or might not be here.
+echo "Checking for presence of include files:"
+
+MODE="check_sysselect "
+echo2 "    sys/select.h... "
+if [ "$HAVE_SYS_SELECT_H" ] ; then
+	if [ "$HAVE_SYS_SELECT_H" = 1 ] ; then
+		echo "(cached) present"
+		log "cache says present"
+	else
+		echo "(cached) not present"
+		log "cache says not present"
+	fi
+else
+	if test_include sys/select.h ; then
+		echo "present"
+	else
+		echo "not present"
+	fi
+fi
+
+MODE="check_systime   "
+echo2 "    sys/time.h... "
+if [ "$HAVE_SYS_TIME_H" ] ; then
+	if [ "$HAVE_SYS_TIME_H" = 1 ] ; then
+		echo "(cached) present"
+		log "cache says present"
+	else
+		echo "(cached) not present"
+		log "cache says not present"
+	fi
+else
+	if test_include sys/time.h ; then
+		echo "present"
+	else
+		echo "not present"
+	fi
+fi
+
+
+MODE="check_syspoll   "
+echo2 "    sys/poll.h... "
+if [ "$HAVE_SYS_POLL_H" ] ; then
+	if [ "$HAVE_SYS_POLL_H" = 1 ] ; then
+		echo "(cached) present"
+		log "cache says present"
+	else
+		echo "(cached) not present"
+		log "cache says not present"
+	fi
+else
+	if test_include sys/poll.h ; then
+		echo "present"
+	else
+		echo "not present"
+	fi
+fi
+
+
+MODE="check_sysepoll   "
+echo2 "    sys/epoll.h... "
+if [ "$HAVE_SYS_EPOLL_H" ] ; then
+	if [ "$HAVE_SYS_EPOLL_H" = 1 ] ; then
+		echo "(cached) present"
+		log "cache says present"
+	else
+		echo "(cached) not present"
+		log "cache says not present"
+	fi
+else
+	if test_include sys/epoll.h ; then
+		echo "present"
+	else
+		echo "not present"
+	fi
+fi
+
+MODE="check_sysevent   "
+echo2 "    sys/event.h... "
+if [ "$HAVE_SYS_EVENT_H" ] ; then
+	if [ "$HAVE_SYS_EVENT_H" = 1 ] ; then
+		echo "(cached) present"
+		log "cache says present"
+	else
+		echo "(cached) not present"
+		log "cache says not present"
+	fi
+else
+	if test_include sys/event.h ; then
+		echo "present"
+	else
+		echo "not present"
+	fi
+fi
+
+
+MODE="check_sysres    "
+echo2 "    sys/resource.h... "
+if [ "$HAVE_SYS_RESOURCE_H" ] ; then
+	if [ "$HAVE_SYS_RESOURCE_H" = 1 ] ; then
+		echo "(cached) present"
+		log "cache says present"
+	else
+		echo "(cached) not present"
+		log "cache says not present"
+	fi
+else
+	if test_include sys/resource.h ; then
+		echo "present"
+	else
+		echo "not present"
+	fi
+fi
+
+###########################################################################
+
+# Look for missing/broken built-in routines, and similar compatibility
+# stuff.
+
+if [ "$HAVE_SYS_EPOLL_H" = 1 ] ; then
+	echo2 "Checking if epoll works... "
+
+	# EXPLANATION: 
+	# If epoll_create() returns -1 (error condition), the test program
+	# will exit with status 1 (error condition).
+	# If epoll_create() returns a positive integer (ok condition),
+	# the test program will exit with status 0 (ok condition).
+	# -vjt
+	MODE="check_epoll     "
+	TEST="return(epoll_create(1) == -1);"
+	if test_function int epoll_create "(int)" ; then
+		EPOLL_WORKS=1
+		echo "yes"
+		log "epoll works"
+	else
+		EPOLL_WORKS=0
+		echo "no"
+		log "epoll doesn't work"
+	fi
+fi
+
+MODE="check_strerror  "
+echo2 "How to complain when something goes wrong... "
+if [ "$HAVE_STRERROR" ] ; then
+	if [ "$HAVE_STRERROR" = 1 ] ; then
+		echo "(cached) strerror()."
+		log "cache supplied strerror()"
+	else
+		echo "(cached) pseudo sys_errlist."
+		log "cache supplied pseudo sys_errlist"
+	fi
+else
+	cat >tmp/test.c <<EOT
+	int main() {
+		extern void strerror(void);
+		strerror();
+	}
+EOT
+	if run $CC $CC_FLAGS tmp/test.c $CC_LIBS -o tmp/test ; then
+		HAVE_STRERROR=1
+		echo "ah, strerror() is here."
+		log "using strerror()"
+	else
+		HAVE_STRERROR=0
+		echo "no strerror()."
+	fi
+fi
+
+
+MODE="check_systime   "
+echo2 "Checking whether time.h and sys/time.h may both be included... "
+if [ "$TIME_WITH_SYS_TIME" ] ; then
+	if [ "$TIME_WITH_SYS_TIME" = 1 ] ; then
+		echo "(cached) yes"
+		log "cache says yes"
+	else
+		echo "(cached) no"
+		log "cache says no"
+	fi
+
+elif [ "$HAVE_SYS_TIME_H" = 0 ] ; then
+	echo "no (missing sys/time.h)"
+	log "sys/time.h is not present"
+	TIME_WITH_SYS_TIME=0
+
+else
+	cat >tmp/test.c <<EOT
+#include <sys/types.h>
+#include <sys/time.h>
+#include <time.h>
+
+int main () {
+
+	if ((struct tm *) 0)
+		return 0;
+	;
+	return 0;
+}
+EOT
+	if run $CC $CC_FLAGS tmp/test.c $CC_LIBS -o tmp/test ; then
+		TIME_WITH_SYS_TIME=1
+		echo "yes"
+		log "both can be included"
+	else
+		TIME_WITH_SYS_TIME=0
+		echo "no"
+		log "only one can be included"
+	fi
+fi
+
+echo2 "Looking for other routines we want that you don't have... "
+
+MODE="check_compat    "
+if [ "$MISSING" != bonkle ] ; then
+	if [ ! "$MISSING" ] ; then
+		echo "(cached) none"
+		log "cache supplied: (none)"
+	else
+		echo "(cached)$MISSING"
+		log "cache supplied:$MISSING"
+	fi
+else
+	MISSING=
+
+	MODE="check_snprintf  "
+	TEST='char buf[16];
+		int res;
+		buf[0] = 0;
+		res = snprintf(buf, 8, "%d", 123456789);
+		if (strcmp(buf, "1234567") != 0) {
+			printf("test: snprintf broken (bad result in buffer: wanted 1234567, got \"%s\")\n", buf);
+			if (strlen(buf) > 7)
+				printf("test: your snprintf does not check buffer size!\n");
+			return 1;
+		} else if (res != 7) {
+			printf("test: snprintf broken (wrong return value: wanted 7, got %d)\n", res);
+			return 1;
+		} else
+			return 0;'
+	if test_function int snprintf "(char *, int, const char *, ...)" ; then
+		log "found, and working"
+	else
+		tmp="`tmp/test 2>&1`"
+		res="`echo $tmp | cut -d\  -f10 2>&1`"
+		if [ "$res" = "-1)" ] ; then
+			log "found, but returns -1 if string too long"
+		elif [ "$res" = "9)" ] ; then
+			log "found, but returns large value if string too long"
+		else
+			MISSING="$MISSING snprintf"
+			echo2 "snprintf "
+			echo ""
+			echo "Looks like your system has no snprintf(). Aborting."
+			exit 4
+		fi
+	fi
+
+	MODE="check_fork      "
+	TEST="(void) fork(); return 0;"
+	if test_function int fork "(void)" ; then : ; else
+		MISSING="$MISSING fork"
+		echo2 "fork "
+	fi
+
+	MODE="check_gethostbyname"
+	TEST='(void) gethostbyname("localhost"); return 0;'
+	if test_function "struct hostent *" gethostbyname "(const char *)" ; then : ; else
+		MISSING="$MISSING gethostbyname"
+		echo2 "gethostbyname "
+	fi
+
+	echo ""
+fi
+
+if [ $HAVE_GETHOSTBYNAME = 0 ] ; then
+	cat <<EOT
+
+*** Notice: Your system does not seem to have the gethostbyname() function.
+*** This function is used to translate hostnames into IP addresses.  Since
+*** you don't have it (or we can't find it), you will need to use IP
+*** addresses instead of hostnames.
+
+EOT
+fi
+
+###########################################################################
+
+# Create files.
+
+echo2 "Creating setup.h... "
+cat >./inc/setup.h <<EOT
+/*
+ * This file is generated automatically by "configure".
+ * Any changes made to it will be erased next time
+ * "configure" is run.
+ */
+
+EOT
+
+if [ $HAVE_SYS_RESOURCE_H = 1 ] ; then cat >>./inc/setup.h <<EOT ; fi
+#define HAVE_SYS_RESOURCE_H	$HAVE_SYS_RESOURCE_H
+EOT
+
+if [ $HAVE_STRERROR = 1 ] ; then cat >>./inc/setup.h <<EOT ; fi
+#define HAVE_STRERROR		$HAVE_STRERROR
+EOT
+
+if [ $TIME_WITH_SYS_TIME = 1 ] ; then cat >>./inc/setup.h <<EOT ; fi
+#define TIME_WITH_SYS_TIME	$TIME_WITH_SYS_TIME
+EOT
+
+if [ $HAVE_SYS_TIME_H = 1 ] ; then cat >>./inc/setup.h <<EOT ; fi
+#define HAVE_SYS_TIME_H		$HAVE_SYS_TIME_H
+EOT
+
+if [ $HAVE_SYS_SELECT_H = 1 ] ; then cat >>./inc/setup.h <<EOT ; fi
+#define HAVE_SYS_SELECT_H	$HAVE_SYS_SELECT_H
+EOT
+
+if [ $HAVE_SYS_POLL_H = 1 ] ; then cat >>./inc/setup.h <<EOT ; fi
+#define HAVE_SYS_POLL_H		$HAVE_SYS_POLL_H
+EOT
+
+if [ $HAVE_SYS_EVENT_H = 1 ] ; then cat >>./inc/setup.h <<EOT ; fi
+#define HAVE_SYS_EVENT_H	$HAVE_SYS_EVENT_H
+EOT
+
+if [ $HAVE_SYS_EPOLL_H = 1 -a $EPOLL_WORKS = 1 ] ; then cat >>./inc/setup.h <<EOT ; fi
+#define HAVE_SYS_EPOLL_H	$HAVE_SYS_EPOLL_H
+EOT
+
+echo "done."
+
+echo2 "Creating Makefile.inc... "
+cat >Makefile.inc <<EOT
+# This file is generated automatically by "configure".  Any changes made
+# to it will be erased next time "configure" is run.
+
+CC=$CC
+BASE_CFLAGS=$CC_FLAGS
+LFLAGS=$CC_LFLAGS
+LIBS=$CC_LIBS
+
+PROGRAM=$PROGRAM
+
+EOT
+echo "done."
+
+###########################################################################
+
+# Delete the temporary directory we created.
+
+rm -rf tmp
+
+###########################################################################
+
+cat <<EOT
+All done!  Now run "make" to compile Azzurra Proxy Monitor.
+EOT
+exit 0

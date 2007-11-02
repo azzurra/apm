@@ -1,0 +1,81 @@
+##################################################################################
+#                           Azzurra Proxy Monitor                                #
+#                                                                                #
+#                            Configuration File                                  #
+#                                                                                #
+##################################################################################
+
+
+# NICK <nickname> : Defines what nickname BOPM will be using.
+#
+
+NICK [APM]-Defiant-NX-74205
+
+
+# NICKSERV_PASS <pass> : Password used to identify to NickServ
+
+NICKSERV_PASS *password*
+
+
+# SERVER <ip> : IRC Server to connect to, also server to command possible open
+#               proxies to connect to. This *MUST* be an IP.
+
+SERVER 1.1.1.1
+
+# BINDSCAN <ip> : IP to bind to for scan connections. Define only if the box has
+#                 more than one IP and you don't want to scan from the server's IP.
+
+BINDSCAN 1.1.1.1
+
+
+# PASSWORD <password> : If you need a password to connect to your server,
+#                       define it here.  Leave commented if not.
+
+#PASSWORD verysecret
+
+
+# PORT <port> : Server port to connect to, also port to command possible open
+#               proxies to connect to.
+
+PORT 6667
+
+
+# OPER <user> <pass> : Username and Password of O line APM will be using.
+
+OPER APM APM-Oper
+
+
+# TIMEOUT <seconds> : Number of seconds before a particular scan on a client
+#                     will timeout. The higher this is set, the more chance of
+#                     slower proxies being caught. However a higher value also means
+#                     more demand for file descriptors at any one time. 
+#                     A default value of 30 is recommended.                  
+
+TIMEOUT 30
+
+
+# FDLIMIT <limit> : Limit number of open file descriptors for SCAN ONLY (this does
+#                   not include file descriptors used for the IRC socket or log files).
+#                   Once limit has been reached, any further scans are queued until
+#                   there are file descriptors free
+#
+#                   Keep this limit equal or less than MAXPOLL as defined in options.h
+
+FDLIMIT 512
+DNSBL 1
+
+# EXCLUDE <hostmask> : Exclude hosts matching this pattern from DNSBL
+#                      checks and proxy scans.  The hostmask uses familiar
+#                      IRC wildcards * and ? and matches against both IP
+#                      and hostname.  Use EXCLUDE multiple times to build a
+#                      list.  You should not be using EXCLUDE unless you
+#                      have very good reason; if APM is finding false
+#                      positives then we regard that a serious problem and
+#                      would like to be told.
+
+EXCLUDE *.azzurra.org
+EXCLUDE *.fastres.net
+EXCLUDE 213.140.*
+EXCLUDE 213.156.*
+EXCLUDE 62.101.*
+EXCLUDE *.edencom.it
