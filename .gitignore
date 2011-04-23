@@ -1,0 +1,6 @@
+Makefile.inc
+configure.log
+*.swp
+*~
+.DS_Store
+._*
